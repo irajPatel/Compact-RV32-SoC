@@ -169,6 +169,7 @@ vvp prog
 # Open waveform
 gtkwave wave.vcd
 ```
+![simualtion](Images/Screenshot 2025-09-17 124728.png)
 
 **Waveform debugging tips**:
 
