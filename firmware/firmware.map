@@ -1,0 +1,47 @@
+
+There are no discarded input sections
+
+Memory Configuration
+
+Name             Origin             Length             Attributes
+mem              0x00000000         0x00000400
+*default*        0x00000000         0xffffffff
+
+Linker script and memory map
+
+
+.memory         0x00000000      0x174
+                0x00000000                        . = 0x0
+ start*(.text)
+ *(.text)
+ .text          0x00000000        0xc ./start.o
+                0x00000000                start
+ .text          0x0000000c      0x110 ./main.o
+                0x0000000c                uart_send_char
+                0x00000038                uart_send_str
+                0x00000080                delay_long
+                0x000000b4                delay_short
+                0x000000dc                main
+ *(*)
+ .data          0x0000011c        0x0 ./start.o
+ .bss           0x0000011c        0x0 ./start.o
+ .riscv.attributes
+                0x0000011c       0x1a ./start.o
+ .data          0x00000136        0x0 ./main.o
+ .bss           0x00000136        0x0 ./main.o
+ *fill*         0x00000136        0x2 
+ .rodata.str1.4
+                0x00000138        0x5 ./main.o
+ .comment       0x0000013d       0x19 ./main.o
+                                 0x1a (size before relaxing)
+ .note.GNU-stack
+                0x00000156        0x0 ./main.o
+ .riscv.attributes
+                0x00000156       0x1c ./main.o
+                0x00000172                        end = .
+                0x00000174                        . = ALIGN (0x4)
+ *fill*         0x00000172        0x2 
+LOAD ./start.o
+LOAD ./main.o
+LOAD /opt/riscv32i/lib/gcc/riscv32-unknown-elf/15.1.0/libgcc.a
+OUTPUT(firmware.elf elf32-littleriscv)
