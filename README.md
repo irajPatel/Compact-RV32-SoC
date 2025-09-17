@@ -36,6 +36,94 @@ This repository contains RTL sources, a small firmware image, testbenches, and h
   - Corsair generated the peripheral skeletons and header files (`*_regs.h`) used by the firmware to access the peripherals.
   - This ensures consistent register offsets between RTL and firmware.
 
+  Detailed device mapping and register maps
+  ---------------------------------------
+
+  - Address decoding (device_select): the SoC uses the top 4 bits of a 32-bit bus address to route accesses.
+    - `0x0_______` : main memory (ROM/RAM)
+    - `0x4_______` : GPIO peripheral (base address `0x40000000`)
+    - `0x5_______` : UART peripheral (base address `0x50000000`)
+
+  - The `device_select` logic (in `src/device_select.v`) is intentionally minimal: it compares the high nibble of `mem_addr` and asserts one-hot select signals:
+
+  ```verilog
+  // simplified excerpt from `device_select.v`
+  wire mem_space  = (addr[31:28] == 4'h0);
+  wire gpio_space = (addr[31:28] == 4'h4);
+  wire uart_space = (addr[31:28] == 4'h5);
+
+  assign s0_sel_mem  = mem_space;
+  assign s1_sel_gpio = gpio_space;
+  assign s2_sel_uart = uart_space;
+  ```
+
+  - How reads/writes are routed in `top.v`:
+    - The processor drives `mem_addr`, `mem_wdata`, `mem_wmask` and `mem_rstrb`.
+    - `device_select` asserts `s0_sel_mem`, `s1_sel_gpio`, or `s2_sel_uart` depending on the `mem_addr` high nibble.
+    - The `top.v` module multiplexes read data back to the processor using these signals. For example:
+
+  ```verilog
+  // excerpt from `top.v`
+  case ({s2_sel_uart, s1_sel_gpio, s0_sel_mem})
+    3'b001: processor_rdata = mem_rdata;    // memory
+    3'b010: processor_rdata = rdata_gpio;    // gpio
+    3'b100: processor_rdata = rdata_uart;    // uart
+  endcase
+  ```
+
+  Local-bus interface
+  -------------------
+
+  - Both `gpio_ip` and `uart_ip` implement the same simple local-bus interface used by `top.v`:
+    - `waddr[31:0]` / `raddr[31:0]` : local 32-bit addresses (top module supplies `{4'h0, mem_addr[27:0]}`)
+    - `wdata[31:0]`, `wen`, `wstrb[3:0]` : write data + byte-lane strobes
+    - `rdata[31:0]`, `ren`, `rvalid` : read data + read handshake
+    - `wready` : write accepted
+
+  - Note: `top.v` constructs a local-bus address by concatenating `4'h0` to `mem_addr[27:0]` before feeding to peripherals. This effectively leaves room for future sub-decoding inside each peripheral.
+
+  GPIO register map (from `firmware/inc/gpio_regs.h`)
+  -------------------------------------------------
+
+  - Base address: `0x40000000` (as defined by `GCSR_BASE_ADDR`)
+  - Registers (offsets from base):
+    - `0x00` - `GPIO_0` (32-bit read/write) : DATA — drives LED outputs
+
+  Register details (GPIO_0)
+  - Width: 32 bits
+  - Access: read/write
+  - Behavior: writes update the `csr_gpio_0_data_ff` register in the IP; the IP exposes `csr_gpio_0_data_out` which is connected to `leds` in `top.v`.
+
+  Example access sequence (software):
+  1. Write 32-bit value to address `0x40000000` using regular store instruction.
+  2. `top.v` asserts `s1_sel_gpio` and `wen` to `gpio_ip`.
+  3. `gpio_ip` latches bytes according to `wstrb` and updates `csr_gpio_0_data_ff`.
+  4. The `csr_gpio_0_data_out` output drives `leds` on the top-level.
+
+  UART register map (from `firmware/inc/uart_regs.h`)
+  -------------------------------------------------
+
+  - Base address: `0x50000000` (as defined by `UCSR_BASE_ADDR`)
+  - Registers (offsets from base):
+    - `0x00` - `U_DATA` (32-bit write/read) : DATA (8-bit payload in LSB)
+    - `0x04` - `U_STAT` (32-bit read) : status bits (READY at bit 5, TX_DONE at bit 13)
+    - `0x08` - `U_CTRL` (32-bit write-only) : control bits (START at bit 9)
+
+  Register behavior and connection to `uart_ip`
+  - Writing to `U_DATA` places the 8-bit character into `csr_u_data_data_out` inside `uart_ip`.
+  - Writing to `U_CTRL.START` (bit 9) issues a one-cycle start pulse `csr_u_ctrl_start_out` that the UART transmitter uses to sample data and begin transmission.
+  - `uart_ip` exposes a `csr_u_stat_ready_in` signal fed by the transmitter `o_ready` to indicate the transmitter can accept new data. The `regs_uart` interface maps that into `U_STAT.READY`.
+  - When a character is sent, `U_STAT.TX_DONE` is asserted for one cycle (`csr_u_stat_tx_done_in`) to allow firmware to detect transmission completion.
+
+  How software typically drives the UART
+  1. Poll `U_STAT.READY` (bit 5) at `0x50000004` until set.
+  2. Write character into `0x50000000` (U_DATA) with the payload in LSB.
+  3. Write to `0x50000008` (U_CTRL) to toggle START (or the `regs_uart` wrapper may assert START automatically when data is written, depending on the auto-generated glue logic).
+
+  Consistency via Corsair
+  -----------------------
+  - Corsair generated the `gpio_regs.h` and `uart_regs.h` headers; these headers define `BASE_ADDR` constants and register offsets, ensuring firmware writes go to exactly the addresses expected by RTL. Keep the header files synchronized with RTL if you edit register layouts.
+
 ## Firmware & Linker Script
 
 - Firmware is a small C program compiled to an ELF and converted to a hex/ram image for the simulation ROM.
@@ -82,6 +170,37 @@ gtkwave wave.vcd
 
 Note: If simulation fails due to elaboration errors, check the RTL for use-before-declare issues or syntax errors (Icarus shows file/line where the error occurred).
 
+Simulation workflow (detailed)
+------------------------------
+
+- Run the testbench and generate a VCD waveform using Icarus Verilog:
+
+```bash
+cd /home/iraj/LearnSoC/picoSoC_v3
+iverilog -g2012 src/*.v tb_processor.v -o prog
+vvp prog       # the TB should create `wave.vcd`
+gtkwave wave.vcd
+```
+
+- If `tb_processor.v` does not create a VCD by default, add a dump section to the testbench (example):
+
+```verilog
+initial begin
+  $dumpfile("wave.vcd");
+  $dumpvars(0, tb_processor);
+  #10000 $finish;
+end
+```
+
+- Example waveform snapshot (add a real image after running sim):
+
+![Waveform example](doc/images/waveform_example.png)
+
+Tips for debugging with waves
+- Focus on `mem_addr`, `mem_wdata`, `mem_wmask`/`mem_wstrb`, `mem_rstrb`, `processor_rdata`, and peripheral `rdata`/`wready`/`rvalid` signals.
+- Watch `s0_sel_mem`, `s1_sel_gpio`, `s2_sel_uart` to verify proper address decoding.
+- For UART debugging, inspect `U_DATA`, `U_CTRL`, `U_STAT` register writes/reads and `o_uart_tx` transitions.
+
 ## Usage Guide: Build & Test
 
 1. Build firmware
@@ -119,11 +238,4 @@ gtkwave wave.vcd
 - FemtoRV32 / PicoRV32 authors for compact RISC-V cores that inspired this project.
 - Corsair project for making register and IP generation easier.
 
----
 
-If you'd like, I can:
-- Tailor the README with exact commands for your toolchain (which riscv gcc version you use).
-- Add example memory maps and addresses used by `device_select` and peripherals.
-- Generate the Corsair YAML snippets used to produce the UART/GPIO register maps.
-
-Tell me which addition you'd prefer next and I'll update the README accordingly.
