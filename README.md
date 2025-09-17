@@ -1,4 +1,4 @@
-# picoSoC_v3
+# Compact-RV32-SoC
 
 ## Introduction
 
