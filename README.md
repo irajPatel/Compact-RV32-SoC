@@ -3,221 +3,248 @@
 
 **Tiny RISC-V SoC for learning, experimentation, and FPGA prototyping!**
 This SoC is built around a **FemtoRV32 CPU**, with **memory**, **GPIO**, and **UART** peripherals. The design is simulation-ready using **Icarus Verilog** and runs simple firmware compiled via **GCC**.
+## 🎯 What is This?
 
----
+**picoSoC_v3** is your gateway to understanding hardware design! It's a minimal yet fully functional RISC-V SoC that you can simulate, learn from, and expand. Perfect for students, hobbyists, and engineers exploring the world of chip design.
 
-## 📂 File Hierarchy & Purpose
-
-| Folder / File           | Description                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `Compact-RV32-SoC/`           | Current main project                                                            |
-| `src/top.v`             | Top-level SoC module connecting CPU, memory, peripherals, and address decoder   |
-| `src/device_select.v`   | Simple address decoder (`addr[31:28]`) asserting selects for memory, GPIO, UART |
-| `src/Memory.v`          | Simple synchronous memory/ROM for firmware (`0x00000000`)                       |
-| `src/femtorv32_quark.v` | FemtoRV32 CPU core (Quark variant) handling fetch, decode, ALU, load/store, CSR |
-| `src/gpio_ip.v`         | Corsair-style GPIO peripheral wrapper (byte-strobe writes, read handshake)      |
-| `src/uart_ip.v`         | UART peripheral wrapper (`U_DATA`, `U_STAT`, `U_CTRL`) and transmitter logic    |
-| `firmware/main.c`       | Example firmware demonstrating LED blink + UART prints                          |
-| `firmware/makehex.py`   | Converts ELF → hex for simulation ROM                                           |
-| `firmware/Makefile`     | Build firmware using GCC                                                        |
-| `firmware/sections.lds` | Linker script controlling `.text` section placement in ROM                      |
-| `firmware/inc/`         | Corsair-generated header files (`gpio_regs.h`, `uart_regs.h`)                   |
-| `tb_processor.v`        | Top-level testbench producing VCD waveforms                                     |
-| `prog` / `prog.exe`     | Compiled simulation binary (`iverilog` output)                                  |
-
----
-
-## 🚀 Features
-
-* RV32I CPU core (FemtoRV32/Quark variant)
-* Synchronous memory + ROM initialization from firmware hex
-* IP cores: GPIO & UART (Corsair-generated register-mapped peripherals)
-* Simple **bus / device selection logic** using high nibble of 32-bit addresses
-* Simulation with **Icarus Verilog + GTKWave**
-* Firmware built using GCC toolchain for RISC-V
-
----
-
-## 🔧 Peripherals & IP Cores
-
-### GPIO 🌟
-
-* Memory-mapped at **`0x40000000`**
-* Single 32-bit register `GPIO_0` (offset `0x0`)
-* Writes update **LED outputs** in `top.v`
-* Interface:
-
-| Signal            | Description               |
-| ----------------- | ------------------------- |
-| `waddr` / `raddr` | 32-bit local addresses    |
-| `wdata` / `rdata` | 32-bit data lines         |
-| `wen` / `ren`     | Write / Read enable       |
-| `wstrb`           | Byte-lane write strobe    |
-| `rvalid`          | Read data valid handshake |
-| `wready`          | Write accepted            |
-
-**Software access sequence**:
-
-1️⃣ CPU writes 32-bit value to `0x40000000`
-2️⃣ `device_select` asserts `s1_sel_gpio` → `gpio_ip`
-3️⃣ `gpio_ip` latches bytes according to `wstrb`
-4️⃣ Output drives `leds` in `top.v`
-
----
-
-### UART ✉️
-
-* Memory-mapped at **`0x50000000`**
-* Registers:
-
-| Offset | Name    | Type       | Description                                      |
-| ------ | ------- | ---------- | ------------------------------------------------ |
-| 0x00   | U\_DATA | R/W 32-bit | 8-bit payload to transmit / receive              |
-| 0x04   | U\_STAT | R 32-bit   | Status bits: `READY` (bit 5), `TX_DONE` (bit 13) |
-| 0x08   | U\_CTRL | W 32-bit   | Control: `START` (bit 9)                         |
-
-**Transmit sequence**:
-
-1️⃣ Poll `U_STAT.READY` (bit 5)
-2️⃣ Write byte into `U_DATA` (0x50000000)
-3️⃣ Toggle `U_CTRL.START` (0x50000008)
-4️⃣ Check `U_STAT.TX_DONE` to confirm byte sent
-
----
-
-## 🗺️ Address Map
-
-| Address      | Peripheral | Notes                         |
-| ------------ | ---------- | ----------------------------- |
-| `0x00000000` | Memory     | Firmware `.text` linked here  |
-| `0x40000000` | GPIO       | `GPIO_0` 32-bit data register |
-| `0x50000000` | UART       | `U_DATA`, `U_STAT`, `U_CTRL`  |
-
-**Device select logic (`device_select.v`)**:
-
-```verilog
-wire mem_space  = (addr[31:28] == 4'h0);
-wire gpio_space = (addr[31:28] == 4'h4);
-wire uart_space = (addr[31:28] == 4'h5);
-
-assign s0_sel_mem  = mem_space;
-assign s1_sel_gpio = gpio_space;
-assign s2_sel_uart = uart_space;
 ```
-
-**Multiplexing reads in `top.v`**:
-
-```verilog
-case ({s2_sel_uart, s1_sel_gpio, s0_sel_mem})
-  3'b001: processor_rdata = mem_rdata;
-  3'b010: processor_rdata = rdata_gpio;
-  3'b100: processor_rdata = rdata_uart;
-endcase
+┌─────────────────────────────────────────┐
+│          🖥️  picoSoC_v3 System          │
+├─────────────────────────────────────────┤
+│  ⚙️  RV32I CPU Core                     │
+│  💾 Memory Module (ROM/RAM)             │
+│  📡 UART Peripheral                     │
+│  💡 GPIO Controller                     │
+│  🔌 Memory-Mapped I/O Bus               │
+└─────────────────────────────────────────┘
 ```
 
 ---
 
-## 🧩 Firmware & Linker
+## ✨ Key Features
 
-* Small C program (`main.c`) compiled to ELF → hex for simulation ROM
-* Linker script `sections.lds` maps `.text` to **ROM origin `0x00000000`**
-* Corsair-generated headers (`gpio_regs.h`, `uart_regs.h`) provide **correct base addresses** and offsets
+| Component | Description |
+|-----------|-------------|
+| 🧠 **CPU Core** | RV32I-based processor with instruction pipeline |
+| 💾 **Memory** | Flash/ROM initialization from hex firmware |
+| 📡 **UART** | Serial communication for debugging & data transfer |
+| 💡 **GPIO** | LED control & digital I/O operations |
+| 🔧 **Bus System** | Clean memory-mapped peripheral access |
+| 🧪 **Testbench** | Complete simulation environment included |
 
 ---
 
-## 🏗️ Top-Level Design (`top.v`)
+## 🔌 Peripheral Deep Dive
 
-**ASCII block diagram**:
+### 💡 GPIO - Your Digital Output Gateway
 
 ```
-CPU (FemtoRV32)
-  |-- instr fetch -> Memory @ 0x00000000
-  |-- load/store addr -> device_select
-          |-- 0x0... -> Memory
-          |-- 0x4... -> GPIO IP
-          |-- 0x5... -> UART IP
+Memory Write → [Address Decoder] → GPIO Register → LEDs 💡
 ```
 
+- **Memory-mapped** registers for instant hardware control
+- **Write mask** support for selective bit updates
+- **Read-back** capability for GPIO state monitoring
+- Integrated via `device_select` logic in `top.v`
 
+### 📡 UART - Serial Communication Made Simple
 
-## 🖥️ Simulation & Dependencies
+```
+CPU ←→ [UART Registers] ←→ TX/RX Lines ←→ 🖥️ Terminal
+```
 
-**Required tools**:
+- **Byte-oriented** TX/RX operations
+- **Status registers** for ready/busy polling
+- **Interrupt support** (configurable)
+- Auto-generated register map via Corsair
 
-* Icarus Verilog (`iverilog`)
-* GTKWave (`gtkwave`)
-* RISC-V GCC toolchain (`riscv32-unknown-elf-gcc`)
-* Python 3 (`makehex.py` script)
+---
 
-**Ubuntu/Debian install**:
+## 🎨 Corsair IP Generation Magic
+
+**Corsair** transforms simple descriptions into production-ready RTL!
+
+```yaml
+📝 YAML Description
+      ↓
+🔮 Corsair Generator
+      ↓
+📦 Verilog RTL + C Headers
+```
+
+### ✅ Benefits:
+- 🎯 **Consistency** - RTL and firmware always in sync
+- ⚡ **Speed** - Generate peripherals in seconds
+- 🛡️ **Reliability** - No manual offset calculations
+- 📚 **Documentation** - Auto-generated register maps
+
+### 🔧 How We Used It:
+1. Define UART/GPIO registers in YAML
+2. Run Corsair generator
+3. Get Verilog modules + C header files (`*_regs.h`)
+4. Include headers in firmware for instant peripheral access
+
+---
+
+## 🗺️ Memory Architecture
+
+```
+┌─────────────────────────────────────┐
+│  0x00000000  ┌─────────────────┐   │
+│              │  🔒 Boot ROM    │   │
+│              │  (Firmware)     │   │
+│  0x00001000  ├─────────────────┤   │
+│              │  💾 RAM         │   │
+│              │  (Data/Stack)   │   │
+│  0x10000000  ├─────────────────┤   │
+│              │  💡 GPIO        │   │
+│  0x10001000  ├─────────────────┤   │
+│              │  📡 UART        │   │
+│  0x10002000  └─────────────────┘   │
+└─────────────────────────────────────┘
+```
+
+**Linker Script** (`sections.lds`) ensures:
+- ✅ Code lands in ROM region
+- ✅ Variables live in RAM
+- ✅ Peripherals mapped to correct addresses
+- ✅ Interrupt vectors properly placed
+
+---
+
+## 🏗️ System Architecture (`top.v`)
+
+```
+        ┌──────────────────────────────────┐
+        │          CPU Core 🧠             │
+        └────────────┬─────────────────────┘
+                     │
+            ┌────────┴────────┐
+            │  Device Select  │  🚦
+            │     Logic       │
+            └────────┬────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+   ┌────▼───┐   ┌───▼────┐  ┌───▼────┐
+   │ Memory │   │  GPIO  │  │  UART  │
+   │   💾   │   │   💡   │  │   📡   │
+   └────────┘   └────────┘  └────────┘
+```
+
+**Clean separation of concerns:**
+- Memory accesses → Memory block
+- I/O accesses → Peripheral blocks  
+- `device_select` routes based on address ranges
+
+---
+
+## 🛠️ Required Tools
+
+| Tool | Purpose | Icon |
+|------|---------|------|
+| **Icarus Verilog** | HDL simulation | 🔬 |
+| **GTKWave** | Waveform viewer | 📊 |
+| **RISC-V GCC** | Firmware compiler | ⚙️ |
+| **Python 3** | Helper scripts | 🐍 |
+| **Make** | Build automation | 🏗️ |
+
+### 📦 Quick Install (Ubuntu/Debian)
 
 ```bash
 sudo apt update
-sudo apt install iverilog gtkwave build-essential python3 python3-pip make
-sudo apt install gcc-riscv64-unknown-elf
+sudo apt install iverilog gtkwave build-essential \
+                 python3 python3-pip make
 ```
 
-**Run simulation**:
-
-```bash
-# Compile RTL + testbench
-iverilog -g2012 src/*.v tb_processor.v -o prog
-
-# Run
-vvp prog
-
-# Open waveform
-gtkwave wave.vcd
-```
-![simulation](Images/Screenshot%202025-09-17%20124728.png)
-
-
-**Waveform debugging tips**:
-
-* Watch: `mem_addr`, `mem_wdata`, `mem_wmask`, `processor_rdata`
-* Verify: `s0_sel_mem`, `s1_sel_gpio`, `s2_sel_uart`
-* UART: monitor `U_DATA`, `U_CTRL`, `U_STAT`, `o_uart_tx`
+*For RISC-V toolchain:* Download from [SiFive](https://www.sifive.com/software) or build from source
 
 ---
 
-## 📝 Usage Guide
+## 🚀 Quick Start Guide
 
-1️⃣ Build firmware:
+### 1️⃣ Build Firmware
 
 ```bash
 cd firmware
 make
+# Generates: firmware.elf & firmware.hex
 ```
 
-2️⃣ Generate hex:
+### 2️⃣ Run Simulation
 
 ```bash
-python3 makehex.py firmware.elf > firmware.hex
-```
-
-3️⃣ Run simulation:
-
-```bash
-cd ../
+cd /home/iraj/LearnSoC/picoSoC_v3
 iverilog -g2012 src/*.v tb_processor.v -o prog
 vvp prog
+```
+
+### 3️⃣ View Waveforms
+
+```bash
 gtkwave wave.vcd
+```
+
+**🎬 Expected Output:**
+```
+💡 LED blinks in simulation
+📡 UART transmits "Hello World!"
+✅ All tests pass
 ```
 
 ---
 
-## 🌟 Future Development
+## 🔮 Future Roadmap
 
-* I2C & SPI peripheral IPs via Corsair modules
-* FPGA hardware validation
-* ASIC flow: OpenLane / Qflow → GDS for tapeout
+### 🚧 Coming Soon:
+- [ ] 🔗 **I2C** peripheral (sensor interfaces)
+- [ ] 🔄 **SPI** peripheral (flash memory, SD cards)
+- [ ] 🔌 **Interrupt controller** (enhanced responsiveness)
+
+### 🎯 Long-Term Goals:
+- [ ] 🎮 **FPGA deployment** (real hardware testing)
+- [ ] 🏭 **ASIC flow** integration (OpenLane/Qflow)
+- [ ] 📐 **GDS generation** for tapeout-ready design
+
+---
+
+## 🧪 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| ❌ Elaboration errors | Check for `use-before-declare` in Verilog |
+| ❌ Firmware won't build | Verify RISC-V toolchain path |
+| ❌ No waveform output | Ensure testbench has `$dumpfile()` |
+| ❌ Peripheral not responding | Check address mapping in linker script |
 
 ---
 
 ## 🙏 Acknowledgments
 
-* FemtoRV32 / PicoRV32 cores for inspiration
-* Corsair project for register/IP generation
+- **FemtoRV32/PicoRV32** teams for compact core inspiration
+- **Corsair** project for register generation tools
+- **RISC-V Foundation** for the open ISA
+- **Open-source community** for EDA tools
 
 ---
 
+## 📚 Learn More
+
+```
+📖 Documentation → /docs
+🔧 Examples      → /firmware/examples  
+🧪 Testbenches   → /testbench
+🎨 Scripts       → /scripts
+```
+
+---
+
+<div align="center">
+
+### ⭐ Star this repo if you found it helpful!
+
+**Made with ❤️ for the hardware hacking community**
+
+🔗 [Report Bug](issues) • 💡 [Request Feature](issues) • 📧 [Contact](mailto:you@example.com)
+
+</div>
